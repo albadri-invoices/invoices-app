@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>دفتر الفواتير</title>
+<meta name="description" content="نظام دفتر الفواتير: قراءة الفواتير والعقود بالذكاء الاصطناعي، منع التكرار، والإجماليات.">
+<meta name="theme-color" content="#0B7A68">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="app.css?v=3.0.0">
+</head>
+<body>
+<!-- تدرجات الأيقونات ثلاثية الأبعاد -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="g-invoice" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3EE0B4"/><stop offset="1" stop-color="#0B8F6E"/></linearGradient>
+    <linearGradient id="g-electricity" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFD25A"/><stop offset="1" stop-color="#E7860C"/></linearGradient>
+    <linearGradient id="g-water" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6FD3FF"/><stop offset="1" stop-color="#0A78C2"/></linearGradient>
+    <linearGradient id="g-lease" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9A2FF"/><stop offset="1" stop-color="#6A45E6"/></linearGradient>
+    <linearGradient id="g-lease_cancel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF9A8F"/><stop offset="1" stop-color="#D93A3A"/></linearGradient>
+    <linearGradient id="g-receipt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7FE7DA"/><stop offset="1" stop-color="#11908A"/></linearGradient>
+    <linearGradient id="g-gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="g-coin" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFE38A"/><stop offset=".55" stop-color="#F5B83C"/><stop offset="1" stop-color="#C97E12"/></linearGradient>
+    <linearGradient id="g-coin-side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D9921F"/><stop offset="1" stop-color="#9C5E08"/></linearGradient>
+    <linearGradient id="g-paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DCEBE7"/></linearGradient>
+  </defs>
+</svg>
+
+<div id="app" aria-live="polite"></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<noscript><p style="padding:24px;font-family:Tahoma">هذا النظام يحتاج JavaScript.</p></noscript>
+<script src="config.js?v=3.0.0"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="app.js?v=3.0.0" defer></script>
+</body>
+</html>
