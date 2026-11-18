@@ -2,7 +2,7 @@
 
 نظام لإدخال الفواتير والمستندات بالذكاء الاصطناعي: تصوّر المستند، والنظام يقرأه ويصنّفه ويحفظه، ويرفض أي مستند مرفوع من قبل.
 
-- **الموقع / التطبيق:** https://abdoooalbadri-svg.github.io/invoices-app/
+- **الموقع / التطبيق:** https://albadri-invoices.github.io/invoices-app/
 - **البيانات:** جدول Google «دفتر الفواتير» (ورقة «البيانات») والصور في Google Drive بحساب المدير.
 - **الخادم:** Google Apps Script — الكود في `backend/Code.gs`.
 

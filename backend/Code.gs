@@ -15,7 +15,7 @@ const CFG = {
   LOG_SHEET: 'سجل التغييرات',
   IMAGES_FOLDER: 'دفتر الفواتير - الصور',
   EXPORT_FOLDER: 'دفتر الفواتير - ملفات Excel',
-  APP_URL: 'https://abdoooalbadri-svg.github.io/invoices-app/',
+  APP_URL: 'https://albadri-invoices.github.io/invoices-app/',
 };
 
 const HEAD = ['المعرف', 'رقم الفاتورة / العقد', 'التاريخ', 'الوصف', 'المبلغ المحتسب (ر.ع.)', 'تحتاج مراجعة', 'سبب المراجعة',
