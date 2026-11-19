@@ -21,6 +21,8 @@ const fmtB = b => (b / 1000).toLocaleString('en-US', { minimumFractionDigits: 3,
 const fmt = a => (typeof a === 'number' && isFinite(a)) ? fmtB(baisa(a)) : '—';
 const normNo = n => toLatin(n).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
 const normName = s => String(s || '').replace(/[\s\-–_.,()]+/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').toLowerCase().slice(0, 12);
+// وقت الرفع: 19/11/2026 · 1:05 م
+const fmtAt = ms => { if (!ms) return ''; const d = new Date(ms); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); let h = d.getHours(); const ap = h < 12 ? 'ص' : 'م'; h = h % 12 || 12; return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} · ${h}:${p(d.getMinutes())} ${ap}`; };
 const monthName = ym => ym ? MONTHS[+ym.slice(5, 7) - 1] + ' ' + ym.slice(0, 4) : '';
 const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} };
@@ -196,16 +198,22 @@ async function sync(force) {
   if (!S.user || S.syncing) return;
   if (!navigator.onLine) { S.online = false; paintSync(); return; }
   S.syncing = true; paintSync();
+  let changed = false;
   try {
-    if (force || (!S.rows.length && !S.rev)) await fullLoad();
+    if (force || (!S.rows.length && !S.rev)) { await fullLoad(); changed = true; }
     else {
       const j = await api('sync', { since: S.rev });
       if (!j.ok) throw new Error(j.error || 'تعذرت المزامنة');
-      if (j.reset) await fullLoad();
-      else if (j.rev !== S.rev) { if (j.rows && j.rows.length) upsert(j.rows.map(a => fromWire(j.fields, a))); removeIds(j.del || []); S.rev = j.rev; persist(); }
+      if (j.reset) { await fullLoad(); changed = true; }
+      else if (j.rev !== S.rev) {
+        if (j.rows && j.rows.length) { upsert(j.rows.map(a => fromWire(j.fields, a))); changed = true; }
+        if (j.del && j.del.length) { removeIds(j.del); changed = true; }
+        S.rev = j.rev; persist();
+      }
     }
     S.online = true; S.syncErr = ''; S.lastSync = Date.now();
-    refresh();
+    // نعيد الرسم فقط إذا تغيّرت البيانات فعلًا (هذا اللي كان يحرّك الصفحة كل 15 ثانية)
+    if (changed) softRefresh();
   } catch (e) { S.syncErr = e.message; S.online = e.code !== 'NET'; }
   finally { S.syncing = false; paintSync(); }
 }
@@ -285,10 +293,26 @@ function renderShell() {
   $('#main').addEventListener('click', e => { const r = e.target.closest('.row[data-id]'); if (r) { openFrom(r.dataset.id); return; } const o = e.target.closest('[data-open]'); if (o) openFrom(o.dataset.open); });
   paintSync();
 }
-function go(v) { if (location.hash !== '#' + v) location.hash = v; else { S.view = v; refresh(); } }
-window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (['home', 'docs', 'upload', 'stats', 'more'].includes(v)) { S.view = v; S.limit = 150; refresh(); window.scrollTo(0, 0); } });
+function go(v) { if (location.hash !== '#' + v) location.hash = v; else { S.view = v; S.enter = true; refresh(); } }
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (['home', 'docs', 'upload', 'stats', 'more'].includes(v)) { S.view = v; S.limit = 150; S.enter = true; refresh(); window.scrollTo(0, 0); } });
+// تحديث هادئ بعد المزامنة: يحافظ على مكان التمرير، ولا يقاطع الكتابة أو نافذة مفتوحة
+let pendingRefresh = false;
+function softRefresh() {
+  const a = document.activeElement;
+  const typing = a && a.closest && a.closest('#main') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+  if (typing || $('.sheet')) { pendingRefresh = true; return; }
+  const y = window.scrollY;
+  if (S.view === 'docs' && $('#list')) paintDocsResults();
+  else if (S.view === 'upload' && $('#qbox')) paintQueue();
+  else refresh();
+  window.scrollTo(0, y);
+}
+document.addEventListener('focusout', () => { if (pendingRefresh) setTimeout(() => { if (pendingRefresh) { pendingRefresh = false; softRefresh(); } }, 400); });
+new MutationObserver(() => { if (pendingRefresh && !$('.sheet')) { pendingRefresh = false; softRefresh(); } }).observe(document.body, { childList: true });
 function refresh() {
   if (!S.user || !$('#main')) return;
+  const enter = S.enter; S.enter = false;
+  setTimeout(() => { const v = $('#main .view'); if (v && enter) v.classList.add('enter'); }, 0);
   $$('.nav [data-v]').forEach(b => b.setAttribute('aria-current', b.dataset.v === S.view ? 'page' : 'false'));
   const qn = Q.items.filter(i => i.st === 'wait' || i.st === 'run').length;
   const fab = $('.nav .fab'); if (fab) fab.innerHTML = I.cam + (qn ? `<span class="badge">${qn}</span>` : '');
@@ -347,7 +371,8 @@ function rowHtml(r) {
   const d = derive(); const dp = d.dup.get(r.id);
   return `<button class="row" data-id="${esc(r.id)}" type="button">${ico(r.type)}
     <div class="r-main"><div class="r-desc">${esc(r.desc || TYPES[r.type].l)}</div>
-      <div class="r-meta"><bdi>${esc(r.date || 'بدون تاريخ')}</bdi><span>·</span><span>رقم <bdi>${esc(r.no || '—')}</bdi></span>${r.by ? `<span>· ${esc(r.by)}</span>` : ''}${r.rv ? '<span class="tag warn">مراجعة</span>' : ''}${dp ? '<span class="tag dup">مكررة</span>' : ''}</div>
+      <div class="r-meta"><bdi>${esc(r.date || 'بدون تاريخ')}</bdi><span>·</span><span>رقم <bdi>${esc(r.no || '—')}</bdi></span>${r.rv ? '<span class="tag warn">مراجعة</span>' : ''}${dp ? '<span class="tag dup">مكررة</span>' : ''}</div>
+      ${r.at || r.by ? `<div class="r-up">⏱ رُفع <bdi>${esc(fmtAt(r.at))}</bdi>${r.by ? ' · ' + esc(r.by) : ''}</div>` : ''}
       ${r.note ? `<div class="r-note">${esc(r.note)}</div>` : ''}</div>
     <div class="r-amt">${INFO(r.type) ? '<div class="a info">للعلم فقط</div>' : `<div class="a">${fmt(r.amt)}</div>`}<div class="c">التراكمي ${fmtB(d.cum.get(r.id) || 0)}</div></div></button>`;
 }
@@ -376,20 +401,29 @@ function vDocs() {
       <div class="field"><label for="fMax">المبلغ إلى</label><input id="fMax" inputmode="decimal" value="${esc(f.max)}" placeholder="0.000"></div>
       <div class="actions-row full"><button class="btn small" id="clearF" type="button">مسح الفلاتر</button></div></div></section>
     <div class="actions-row" style="align-items:center">
-      <div class="muted" style="flex:2;min-width:180px"><b class="num" style="color:var(--ink)">${list.length.toLocaleString('en-US')}</b> مستند ${isFiltered() ? 'مطابق' : ''} · المجموع <b class="num" style="color:var(--ink)">${fmtB(sumB)}</b> ر.ع.</div>
-      <button class="btn small" id="exp" type="button">${I.dl}${isFiltered() ? 'Excel للنتائج' : 'Excel للكل'}</button>
+      <div class="muted" id="dcount" style="flex:2;min-width:180px">${countHtml(list, sumB)}</div>
+      <button class="btn small" id="exp" type="button">${I.dl}<span id="expL">${isFiltered() ? 'Excel للنتائج' : 'Excel للكل'}</span></button>
     </div>
     <div id="list">${listHtml(list)}</div></div>`;
+  // البحث يحدّث النتائج فقط، وخانة البحث تبقى ثابتة (ما تنقفل لوحة المفاتيح)
   const q = $('#q'); let qt;
-  q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { S.f.q = q.value; S.limit = 150; const pos = q.selectionStart; vDocs(); const nq = $('#q'); nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (e) {} }, 220); };
+  q.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { S.f.q = q.value; S.limit = 150; paintDocsResults(); }, 220); };
   $('#advBtn').onclick = () => { const a = $('#adv'); a.hidden = !a.hidden; $('#advBtn').setAttribute('aria-expanded', !a.hidden); };
   $('#fType').onchange = e => { S.f.type = e.target.value; S.limit = 150; vDocs(); };
   $('#fYear').onchange = e => { S.f.year = e.target.value; S.limit = 150; vDocs(); };
   $$('[data-status]').forEach(b => b.onclick = () => { S.f.status = b.dataset.status; S.limit = 150; vDocs(); });
   [['fBy', 'by'], ['fSort', 'sort'], ['fFrom', 'from'], ['fTo', 'to'], ['fMin', 'min'], ['fMax', 'max']].forEach(([id, k]) => { $('#' + id).onchange = e => { S.f[k] = e.target.value.trim(); S.limit = 150; vDocs(); }; });
   $('#clearF').onclick = () => { resetF(); vDocs(); };
-  $('#exp').onclick = () => exportXlsx(list, isFiltered());
-  $('#list').addEventListener('click', e => { if (e.target.closest('#more')) { S.limit += 300; vDocs(); } });
+  $('#exp').onclick = () => exportXlsx(filtered(), isFiltered());
+  $('#list').addEventListener('click', e => { if (e.target.closest('#more')) { S.limit += 300; paintDocsResults(); } });
+}
+function countHtml(list, sumB) { return `<b class="num" style="color:var(--ink)">${list.length.toLocaleString('en-US')}</b> مستند ${isFiltered() ? 'مطابق' : ''} · المجموع <b class="num" style="color:var(--ink)">${fmtB(sumB)}</b> ر.ع.`; }
+function paintDocsResults() {
+  const list = filtered(); let sumB = 0; list.forEach(r => { sumB += r._b; });
+  const c = $('#dcount'), l = $('#list'), e = $('#expL');
+  if (c) c.innerHTML = countHtml(list, sumB);
+  if (e) e.textContent = isFiltered() ? 'Excel للنتائج' : 'Excel للكل';
+  if (l) l.innerHTML = listHtml(list);
 }
 function listHtml(list) {
   if (!S.rows.length) return '<div class="c3d empty"><strong>ما فيه مستندات بعد</strong>اضغط الزر الأخضر في الأسفل وصوّر أول مستند.</div>';
@@ -456,7 +490,7 @@ function openDoc(id) {
     <p class="err" id="e-err"></p>
     <button class="btn primary" id="e-save" type="button">حفظ</button>
     <div class="actions-row"><button class="btn" data-close type="button">إغلاق</button>${r && admin ? '<button class="btn danger" id="e-del" type="button">حذف</button>' : ''}</div>
-    ${r ? `<p class="meta">${[r.by && 'أدخلها: ' + esc(r.by), r.at && new Date(r.at).toLocaleString('ar-OM', { dateStyle: 'medium', timeStyle: 'short' }), r.src && 'القراءة: ' + esc(r.src)].filter(Boolean).join(' · ')}</p>` : ''}
+    ${r ? `<p class="meta">${[r.at && '⏱ رُفع ' + esc(fmtAt(r.at)), r.by && 'بواسطة ' + esc(r.by), r.upd && r.upd - (r.at || 0) > 60000 ? 'آخر تعديل ' + esc(fmtAt(r.upd)) : '', r.src && 'القراءة: ' + esc(r.src)].filter(Boolean).join(' · ')}</p>` : ''}
   </div>`;
   document.body.appendChild(sheet);
   const close = () => sheet.remove();
@@ -507,11 +541,30 @@ const Q = { items: [], running: 0, paused: false };
 const CONC = 2;
 async function loadQueue() { Q.items = (await DB.all('queue')).sort((a, b) => a.t - b.t); Q.items.forEach(i => { if (i.st === 'run') i.st = 'wait'; }); }
 const saveItem = it => DB.put('queue', it.id, it);
-function bindPickers(root) { $$('input[data-pick]', root).forEach(inp => inp.onchange = e => { const f = Array.from(e.target.files || []); e.target.value = ''; if (f.length) { toast(f.length === 1 ? 'انضافت الصورة للطابور' : 'انضافت ' + f.length + ' صورة للطابور'); addFiles(f); if (S.view !== 'upload') go('upload'); } }); }
+// ملاحظة آيفون: لا نمسح قيمة حقل الاختيار إلا بعد قراءة كل الصور، لأن سفاري يحذف الملفات المؤقتة عند المسح
+function bindPickers(root) {
+  $$('input[data-pick]', root).forEach(inp => inp.onchange = async e => {
+    const input = e.target; const f = Array.from(input.files || []);
+    if (!f.length) return;
+    toast(f.length === 1 ? 'انضافت الصورة للطابور' : 'انضافت ' + f.length + ' صورة للطابور');
+    if (S.view !== 'upload') go('upload');
+    await addFiles(f);
+    try { input.value = ''; } catch (err) {}
+  });
+}
 async function sha(buf) { try { const d = await crypto.subtle.digest('SHA-256', buf); return Array.from(new Uint8Array(d).slice(0, 12)).map(b => ('0' + b.toString(16)).slice(-2)).join(''); } catch (e) { return ''; } }
-async function decode(file) {
-  try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) {}
-  return new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('decode')); im.src = u; });
+const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+function viaImg(blob) {
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(blob), im = new Image();
+    im.onload = () => { res(im); setTimeout(() => URL.revokeObjectURL(u), 1000); };
+    im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('الجهاز ما قدر يفتح الصورة')); };
+    im.src = u;
+  });
+}
+async function decode(blob) {
+  if (window.createImageBitmap) { try { return await withTimeout(createImageBitmap(blob, { imageOrientation: 'from-image' }), 20000, 'decode-timeout'); } catch (e) {} }
+  return withTimeout(viaImg(blob), 30000, 'الصورة كبيرة وأخذت وقت طويل');
 }
 async function compress(file) {
   const img = await decode(file);
@@ -522,25 +575,35 @@ async function compress(file) {
   let out = await enc(0.8); if (out.size > 220000) out = await enc(0.65);
   const t = document.createElement('canvas'); const ts = 96 / Math.max(c.width, c.height); t.width = Math.round(c.width * ts); t.height = Math.round(c.height * ts);
   t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
-  return { blob: out, thumb: t.toDataURL('image/jpeg', 0.6) };
+  if (img.close) try { img.close(); } catch (e) {}
+  c.width = c.height = 0;   // تحرير الذاكرة (مهم في الآيفون)
+  return { buf: await out.arrayBuffer(), thumb: t.toDataURL('image/jpeg', 0.6) };
 }
+let adding = 0;
 async function addFiles(files) {
-  keepAwake();
+  keepAwake(); adding++;
   const hashes = new Set(S.rows.map(r => r.hash).filter(Boolean));
-  for (const file of files) {
-    const it = { id: 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: file.name || 'صورة', t: Date.now(), st: 'prep', msg: 'تجهيز…' };
-    Q.items.push(it); refreshUpload();
+  const items = files.map(file => ({ id: 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), name: file.name || 'صورة', t: Date.now(), st: 'prep', msg: 'بانتظار التجهيز…' }));
+  Q.items.push(...items); refreshUpload();
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i], it = items[i];
+    it.msg = 'تجهيز…'; refreshUpload();
     try {
-      it.hash = await sha(await file.arrayBuffer());
+      const raw = await withTimeout(file.arrayBuffer(), 30000, 'ما قدر يقرأ الصورة من الجهاز');
+      it.hash = await sha(raw);
       const inQ = Q.items.find(o => o !== it && o.hash && o.hash === it.hash && o.st !== 'bad');
-      const c = await compress(file); it.blob = c.blob; it.thumb = c.thumb;
-      if (it.hash && hashes.has(it.hash)) { const ex = S.rows.find(r => r.hash === it.hash); it.st = 'dup'; it.msg = 'مرفوض: نفس الصورة مرفوعة من قبل'; it.ex = ex ? { id: ex.id, no: ex.no, date: ex.date, desc: ex.desc, amt: ex.amt, by: ex.by } : null; it.blob = null; }
-      else if (inQ) { it.st = 'dup'; it.msg = 'مرفوض: نفس الصورة مكررة في الاختيار'; it.blob = null; }
-      else { it.st = 'wait'; it.msg = navigator.onLine ? 'بالانتظار' : 'بانتظار الإنترنت'; }
-    } catch (e) { it.st = 'bad'; it.msg = 'صيغة الصورة غير مدعومة'; }
+      if (it.hash && hashes.has(it.hash)) { const ex = S.rows.find(r => r.hash === it.hash); it.st = 'dup'; it.msg = 'مرفوض: نفس الصورة مرفوعة من قبل'; it.ex = ex ? { id: ex.id, no: ex.no, date: ex.date, desc: ex.desc, amt: ex.amt, by: ex.by, at: ex.at } : null; }
+      else if (inQ) { it.st = 'dup'; it.msg = 'مرفوض: نفس الصورة مكررة في الاختيار'; }
+      else {
+        const c = await compress(new Blob([raw], { type: file.type || 'image/jpeg' }));
+        it.buf = c.buf; it.thumb = c.thumb;
+        it.st = 'wait'; it.msg = navigator.onLine ? 'بالانتظار' : 'بانتظار الإنترنت';
+      }
+    } catch (e) { it.st = 'bad'; it.msg = 'تعذر تجهيز الصورة: ' + (e && e.message || 'صيغة غير مدعومة') + '. جرّب تصوّرها بالكاميرا من داخل النظام.'; }
     await saveItem(it); refreshUpload();
+    pump();
   }
-  pump();
+  adding--;
 }
 function pump() {
   while (!Q.paused && navigator.onLine && Q.running < CONC) {
@@ -549,20 +612,25 @@ function pump() {
     processItem(it).finally(() => { Q.running--; saveItem(it); refreshUpload(); pump(); if (!Q.running) { sync(); releaseAwake(); } });
   }
 }
-const b64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+function b64(buf) {
+  const bytes = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
 async function processItem(it) {
   try {
-    if (!it.blob) { it.st = 'bad'; it.msg = 'الصورة مفقودة، اخترها مرة ثانية'; return; }
-    const j = await api('upload', { b64: await b64(it.blob), hash: it.hash });
+    if (!it.buf && it.blob) it.buf = await it.blob.arrayBuffer();   // طوابير من الإصدار السابق
+    if (!it.buf) { it.st = 'bad'; it.msg = 'الصورة مفقودة، اخترها مرة ثانية'; return; }
+    const j = await api('upload', { b64: b64(it.buf), hash: it.hash });
     if (!j.ok) {
       if (j.code === 'RATE_LIMIT') { it.st = 'wait'; it.msg = 'ضغط على Claude، بيكمل بعد دقيقة'; pauseFor(60000); return; }
       it.st = 'bad'; it.msg = j.error || 'تعذرت القراءة';
       if (/credit|balance|رصيد/i.test(it.msg)) it.msg = 'رصيد Claude API خلص. اشحن الرصيد وأعد المحاولة';
       return;
     }
-    if (j.status === 'duplicate') { it.st = 'dup'; it.msg = 'مرفوض: ' + j.reason; it.ex = j.existing; it.blob = null; return; }
+    if (j.status === 'duplicate') { it.st = 'dup'; it.msg = 'مرفوض: ' + j.reason; it.ex = j.existing; it.buf = null; it.blob = null; return; }
     const row = fromWire(j.fields, j.row); upsert([row]);
-    it.st = 'ok'; it.rowId = row.id; it.blob = null;
+    it.st = 'ok'; it.rowId = row.id; it.buf = null; it.blob = null;
     it.msg = 'انحفظ · ' + TYPES[row.type].l + ' · ' + (row.rv ? 'تحتاج مراجعة' : INFO(row.type) ? 'للعلم' : fmt(row.amt) + ' ر.ع.');
   } catch (e) {
     if (e.code === 'NET') { it.st = 'wait'; it.msg = 'بانتظار الإنترنت'; pauseFor(15000); }
@@ -573,38 +641,51 @@ function pauseFor(ms) { if (Q.paused) return; Q.paused = true; refreshUpload(); 
 let wake = null;
 async function keepAwake() { try { if (!wake && navigator.wakeLock) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } } catch (e) {} }
 function releaseAwake() { try { if (wake) wake.release(); } catch (e) {} wake = null; }
-window.addEventListener('beforeunload', e => { if (Q.items.some(i => i.st === 'run' || i.st === 'prep')) { e.preventDefault(); e.returnValue = ''; } });
-function refreshUpload() { if (S.view === 'upload') vUpload(); else { const fab = $('.nav .fab'); if (fab) { const qn = Q.items.filter(i => i.st === 'wait' || i.st === 'run').length; fab.innerHTML = I.cam + (qn ? `<span class="badge">${qn}</span>` : ''); } } }
-
-function vUpload() {
+window.addEventListener('beforeunload', e => { if (adding || Q.items.some(i => i.st === 'run' || i.st === 'prep')) { e.preventDefault(); e.returnValue = ''; } });
+// تحديث الطابور في مكانه بدون إعادة رسم الصفحة (حتى ما تتحرك الصفحة مع كل صورة)
+let qPaint = 0;
+function refreshUpload() {
+  const fab = $('.nav .fab');
+  if (fab) { const qn = Q.items.filter(i => i.st === 'wait' || i.st === 'run' || i.st === 'prep').length; fab.innerHTML = I.cam + (qn ? `<span class="badge">${qn}</span>` : ''); }
+  if (S.view !== 'upload' || qPaint) return;
+  qPaint = requestAnimationFrame(() => { qPaint = 0; paintQueue(); });
+}
+function paintQueue() {
+  const box = $('#qbox'); if (!box) return;
   const J = Q.items;
   const done = J.filter(i => ['ok', 'dup', 'bad'].includes(i.st)).length;
   const cnt = k => J.filter(i => i.st === k).length;
   const order = { run: 0, prep: 1, wait: 2, bad: 3, dup: 4, ok: 5 };
   const list = J.slice().sort((a, b) => (order[a.st] - order[b.st]) || (b.t - a.t)).slice(0, 120);
+  const failedRetry = J.some(i => i.st === 'bad' && (i.buf || i.blob));
+  box.innerHTML = `${!navigator.onLine ? '<div class="banner warn">📶 ما فيه إنترنت. الصور محفوظة في الجهاز وبتنرفع لحالها لما يرجع الاتصال.</div>' : ''}
+    ${Q.paused ? '<div class="banner warn">⏳ توقف مؤقت، بيكمل تلقائيًا.</div>' : ''}
+    ${adding ? '<div class="banner info">📷 جارٍ تجهيز الصور… خلّ الصفحة مفتوحة ولا تقفل الشاشة لين يخلص التجهيز.</div>' : ''}
+    ${J.length ? `<section class="panel c3d">
+      <div class="h-sec"><span>${done === J.length ? 'خلص الطابور' : 'جارٍ الرفع'} <span class="num muted">${done} من ${J.length}</span></span>
+        <span class="actions-row" style="flex:none">${failedRetry ? '<button class="btn small" id="retry" type="button">إعادة الفاشلة</button>' : ''}${done ? '<button class="btn small" id="clearQ" type="button">مسح المنتهية</button>' : ''}</span></div>
+      <div class="progress" style="margin-top:12px"><i style="width:${(J.length ? done / J.length * 100 : 0).toFixed(1)}%"></i></div>
+      <div class="filters-row" style="margin-top:12px"><span class="chip ok">✓ ${cnt('ok')} انحفظ</span><span class="chip dup">⧉ ${cnt('dup')} مرفوض مكرر</span><span class="chip bad">✕ ${cnt('bad')} فشل</span><span class="chip">⏳ ${cnt('wait') + cnt('run') + cnt('prep')} بالانتظار</span></div>
+    </section>
+    <section class="c3d">${list.map(it => `<div class="q-item ${it.st}">${it.thumb ? `<img src="${it.thumb}" alt="">` : '<img alt="">'}
+      <div class="q-txt"><div class="q-name">${esc(it.name)}</div><div class="q-msg">${esc(it.msg || '')}</div>
+      ${it.st === 'dup' && it.ex ? `<div class="dupcard">المستند الأصلي: ${esc(it.ex.desc || '')} · رقم ${esc(it.ex.no || '—')} · ${esc(it.ex.date || '')} · ${fmt(it.ex.amt)}${it.ex.by ? ' · رفعه ' + esc(it.ex.by) : ''}${it.ex.at ? ' · ' + fmtAt(it.ex.at) : ''} <button class="btn small" data-open="${esc(it.ex.id)}" type="button">عرض الأصلي</button></div>` : ''}
+      </div>${it.st === 'ok' && it.rowId ? `<button class="btn small" data-open="${esc(it.rowId)}" type="button">عرض</button>` : ''}</div>`).join('')}</section>` :
+      `<section class="drop c3d">${ico('invoice', 'lg')}<h2 style="font-size:18px">ابدأ بتصوير أول مستند</h2><p class="muted" style="margin:0">أو اختر عشرات الصور مرة وحدة من المعرض. خلّ الصفحة مفتوحة لين يخلص الرفع.</p></section>`}`;
+  const rt = $('#retry', box); if (rt) rt.onclick = () => { Q.items.forEach(i => { if (i.st === 'bad' && (i.buf || i.blob)) { i.st = 'wait'; i.msg = 'بالانتظار'; saveItem(i); } }); pump(); refreshUpload(); };
+  const cq = $('#clearQ', box); if (cq) cq.onclick = async () => { const keep = []; for (const i of Q.items) { if (['ok', 'dup'].includes(i.st) || (i.st === 'bad' && !i.buf && !i.blob)) await DB.del('queue', i.id); else keep.push(i); } Q.items = keep; refreshUpload(); };
+}
+function vUpload() {
   $('#main').innerHTML = `<div class="view">
     <div class="quick">
       <label class="btn primary">${I.cam}تصوير مستند<input type="file" accept="image/*" capture="environment" data-pick="cam"></label>
       <label class="btn blue">${I.img}رفع من الصور<input type="file" accept="image/*" multiple data-pick="gal"></label>
     </div>
     <p class="muted" style="margin:0">صورة واحدة لكل مستند، بأي ترتيب. النظام يتعرف على النوع (فاتورة، كهرباء، ماء، عقد، إلغاء عقد، إيصال)، ويرفض أي مستند مرفوع من قبل ويوضح السبب.</p>
-    ${!navigator.onLine ? '<div class="banner warn">📶 ما فيه إنترنت. الصور محفوظة في الجهاز وبتنرفع لحالها لما يرجع الاتصال.</div>' : ''}
-    ${Q.paused ? '<div class="banner warn">⏳ توقف مؤقت، بيكمل تلقائيًا.</div>' : ''}
-    ${J.length ? `<section class="panel c3d">
-      <div class="h-sec"><span>${done === J.length ? 'خلص الطابور' : 'جارٍ الرفع'} <span class="num muted">${done} من ${J.length}</span></span>
-        <span class="actions-row" style="flex:none">${cnt('bad') ? '<button class="btn small" id="retry" type="button">إعادة الفاشلة</button>' : ''}${done ? '<button class="btn small" id="clearQ" type="button">مسح المنتهية</button>' : ''}</span></div>
-      <div class="progress" style="margin-top:12px"><i style="width:${(J.length ? done / J.length * 100 : 0).toFixed(1)}%"></i></div>
-      <div class="filters-row" style="margin-top:12px"><span class="chip ok">✓ ${cnt('ok')} انحفظ</span><span class="chip dup">⧉ ${cnt('dup')} مرفوض مكرر</span><span class="chip bad">✕ ${cnt('bad')} فشل</span><span class="chip">⏳ ${cnt('wait') + cnt('run') + cnt('prep')} بالانتظار</span></div>
-    </section>
-    <section class="c3d">${list.map(it => `<div class="q-item ${it.st}">${it.thumb ? `<img src="${it.thumb}" alt="">` : '<img alt="">'}
-      <div class="q-txt"><div class="q-name">${esc(it.name)}</div><div class="q-msg">${esc(it.msg || '')}</div>
-      ${it.st === 'dup' && it.ex ? `<div class="dupcard">المستند الأصلي: ${esc(it.ex.desc || '')} · رقم ${esc(it.ex.no || '—')} · ${esc(it.ex.date || '')} · ${fmt(it.ex.amt)}${it.ex.by ? ' · رفعه ' + esc(it.ex.by) : ''} <button class="btn small" data-open="${esc(it.ex.id)}" type="button">عرض الأصلي</button></div>` : ''}
-      </div>${it.st === 'ok' && it.rowId ? `<button class="btn small" data-open="${esc(it.rowId)}" type="button">عرض</button>` : ''}</div>`).join('')}</section>` :
-      `<section class="drop c3d">${ico('invoice', 'lg')}<h2 style="font-size:18px">ابدأ بتصوير أول مستند</h2><p class="muted" style="margin:0">أو اختر عشرات الصور مرة وحدة من المعرض. خلّ الصفحة مفتوحة لين يخلص الرفع.</p></section>`}
+    <div id="qbox" style="display:flex;flex-direction:column;gap:18px"></div>
   </div>`;
   bindPickers($('#main'));
-  const rt = $('#retry'); if (rt) rt.onclick = () => { Q.items.forEach(i => { if (i.st === 'bad' && i.blob) { i.st = 'wait'; i.msg = 'بالانتظار'; saveItem(i); } }); pump(); vUpload(); };
-  const cq = $('#clearQ'); if (cq) cq.onclick = async () => { const keep = []; for (const i of Q.items) { if (['ok', 'dup'].includes(i.st) || (i.st === 'bad' && !i.blob)) await DB.del('queue', i.id); else keep.push(i); } Q.items = keep; vUpload(); refresh(); };
+  paintQueue();
 }
 
 /* ================= الإحصاءات ================= */
@@ -659,6 +740,10 @@ function vMore() {
     <section class="panel c3d list-tight"><h2 class="h-sec">البيانات</h2>
       <p class="muted" style="margin:0">البيانات محفوظة في جدول Google وصورها في Google Drive بحساب المدير، ونسخة منها في هذا الجهاز للسرعة.</p>
       <button class="btn" id="full" type="button">تحديث كامل من الخادم</button></section>
+    <section class="panel c3d list-tight"><h2 class="h-sec">🛟 النسخ الاحتياطية</h2>
+      <p class="muted" style="margin:0">نسخة كاملة من الجدول تنحفظ <b>تلقائيًا كل يوم</b> في مجلد «دفتر الفواتير - نسخ احتياطية» في Google Drive (آخر 60 يوم). الصور محفوظة في مجلد «دفتر الفواتير - الصور».</p>
+      <div class="note" id="bkInfo">جارٍ التحقق من آخر نسخة…</div>
+      ${admin ? '<button class="btn primary" id="bkNow" type="button">سوِّ نسخة احتياطية الآن</button>' : ''}</section>
     ${admin ? `<section class="c3d" id="usersBox"><h2 class="h-sec" style="padding:16px 16px 6px">المستخدمين <button class="btn small" id="addU" type="button">+ مستخدم</button></h2><div id="ulist"><div class="skeleton" style="margin:12px"></div></div></section>
     <section class="panel c3d list-tight"><h2 class="h-sec">رابط الخادم</h2><input class="input" id="srv" dir="ltr" value="${esc(apiUrl())}"><button class="btn small" id="srvSave" type="button">حفظ الرابط لهذا الجهاز</button></section>` : ''}
     <section class="panel c3d list-tight"><h2 class="h-sec">تثبيت كتطبيق</h2>
@@ -670,6 +755,9 @@ function vMore() {
   $$('[data-theme]').forEach(b => b.onclick = () => { lsSet('theme', b.dataset.theme); applyTheme(); vMore(); });
   $('#full').onclick = async () => { const b = $('#full'); b.disabled = true; b.textContent = 'جارٍ التحميل…'; await sync(true); b.disabled = false; b.textContent = 'تحديث كامل من الخادم'; toast('تم التحديث'); };
   const inst = $('#inst'); if (inst) inst.onclick = async () => { if (!deferredInstall) return; deferredInstall.prompt(); deferredInstall = null; inst.hidden = true; };
+  const paintBk = b => { const el = $('#bkInfo'); if (!el) return; el.innerHTML = b ? `✅ آخر نسخة: <b>${esc(fmtAt(b.at))}</b> · ${Number(b.rows || 0).toLocaleString('en-US')} مستند${admin && b.url ? ` · <a href="${esc(b.url)}" target="_blank" rel="noopener">فتح النسخة</a>` : ''}` : '⚠️ ما فيه نسخة احتياطية للحين. لازم المدير يحدّث الخادم ويشغّل setup.'; };
+  api('status').then(j => { if (j.ok) paintBk(j.backup); else paintBk(null); }).catch(() => { const el = $('#bkInfo'); if (el) el.textContent = 'تعذر التحقق (تأكد من الإنترنت).'; });
+  const bk = $('#bkNow'); if (bk) bk.onclick = async () => { bk.disabled = true; bk.textContent = 'جارٍ النسخ…'; try { const j = await api('backup'); if (!j.ok) throw new Error(j.error); paintBk(j.backup); toast('✅ انحفظت نسخة احتياطية كاملة'); } catch (e) { toast('تعذرت النسخة: ' + e.message); } finally { bk.disabled = false; bk.textContent = 'سوِّ نسخة احتياطية الآن'; } };
   if (admin) {
     $('#srvSave').onclick = () => { lsSet('api_url', $('#srv').value.trim() || null); toast('انحفظ الرابط'); };
     $('#addU').onclick = () => editUser(null);
@@ -715,7 +803,7 @@ function exportXlsx(list, isFilteredList) {
   const serial = s => { const [y, m, dd] = s.split('-').map(Number); return (Date.UTC(y, m - 1, dd) - Date.UTC(1899, 11, 30)) / 86400000; };
   const NF = '#,##0.000';
   const head = ['م', 'نوع المستند', 'رقم الفاتورة / العقد', 'التاريخ', 'الوصف', 'المبلغ المحتسب (ر.ع.)', 'الإجمالي التراكمي', 'السنة', 'الشهر', 'يحتاج مراجعة', 'سبب المراجعة', 'تنبيه تكرار',
-    'رقم الحساب', 'فاتورة شهر', 'رقم الفاتورة المدفوعة', 'المؤجر', 'المستأجر', 'العقار', 'من تاريخ', 'إلى تاريخ', 'الإيجار الشهري', 'المدة (شهور)', 'تاريخ الإلغاء', 'المبلغ المدفوع', 'ملاحظة', 'أدخلها'];
+    'رقم الحساب', 'فاتورة شهر', 'رقم الفاتورة المدفوعة', 'المؤجر', 'المستأجر', 'العقار', 'من تاريخ', 'إلى تاريخ', 'الإيجار الشهري', 'المدة (شهور)', 'تاريخ الإلغاء', 'المبلغ المدفوع', 'ملاحظة', 'أدخلها', 'وقت الرفع', 'رابط الصورة (Drive)'];
   const S_ = v => ({ t: 's', v: v == null ? '' : String(v) });
   const N_ = (v, z) => (v === '' || v == null || isNaN(v)) ? S_('') : Object.assign({ t: 'n', v: Number(v) }, z ? { z } : {});
   const D_ = v => v ? { t: 'n', v: serial(v), z: 'yyyy-mm-dd' } : S_('');
@@ -725,14 +813,16 @@ function exportXlsx(list, isFilteredList) {
     run += r._b; const dp = d.dup.get(r.id);
     rows.push([N_(i + 1), S_(TYPES[r.type].l), S_(r.no), D_(r.date), S_(r.desc), N_(r._b / 1000, NF), N_((isFilteredList ? run : d.cum.get(r.id)) / 1000, NF),
       r.date ? N_(+r.date.slice(0, 4)) : S_(''), r.date ? N_(+r.date.slice(5, 7)) : S_(''), S_(r.rv ? 'نعم' : ''), S_(r.rv ? r.why : ''), S_(dp ? 'مكررة: ' + dp.why : ''),
-      S_(r.acct), S_(r.bmonth), S_(r.ref), S_(r.landlord), S_(r.tenant), S_(r.prop), D_(r.from), D_(r.to), N_(r.rent, NF), N_(r.months), D_(r.cancel), N_(r.paid, NF), S_(r.note), S_(r.by)]);
+      S_(r.acct), S_(r.bmonth), S_(r.ref), S_(r.landlord), S_(r.tenant), S_(r.prop), D_(r.from), D_(r.to), N_(r.rent, NF), N_(r.months), D_(r.cancel), N_(r.paid, NF), S_(r.note), S_(r.by),
+      r.at ? { t: 'n', v: (r.at - Date.UTC(1899, 11, 30)) / 86400000 + 4 / 24, z: 'yyyy-mm-dd hh:mm' } : S_(''),
+      typeof r.img === 'string' && r.img.length > 5 ? S_('https://drive.google.com/file/d/' + r.img + '/view') : S_('')]);
   });
   const last = list.length + 1;
   rows.push([]);
   rows.push([S_(''), S_(''), S_(''), S_(''), S_('المجموع الكلي'), { t: 'n', v: list.reduce((a, r) => a + r._b, 0) / 1000, f: `SUM(F2:F${last})`, z: NF }]);
   const ws1 = XLSX.utils.aoa_to_sheet(rows);
-  ws1['!cols'] = [6, 11, 16, 12, 40, 16, 16, 7, 7, 11, 30, 22, 14, 10, 18, 22, 22, 24, 12, 12, 12, 10, 12, 12, 50, 14].map(w => ({ wch: w }));
-  ws1['!autofilter'] = { ref: `A1:Z${last}` };
+  ws1['!cols'] = [6, 11, 16, 12, 40, 16, 16, 7, 7, 11, 30, 22, 14, 10, 18, 22, 22, 24, 12, 12, 12, 10, 12, 12, 50, 14, 17, 40].map(w => ({ wch: w }));
+  ws1['!autofilter'] = { ref: `A1:AB${last}` };
   const ref = "'المستندات'!", F = `${ref}F2:F${last}`, H = `${ref}H2:H${last}`, Im = `${ref}I2:I${last}`, B = `${ref}B2:B${last}`;
   const ys = new Map(), ms = new Map(); let noneB = 0, noneC = 0;
   list.forEach(r => { if (!r.date) { noneB += r._b; noneC++; return; } const y = +r.date.slice(0, 4), m = +r.date.slice(5, 7); const Y = ys.get(y) || { b: 0, c: 0 }; Y.b += r._b; Y.c++; ys.set(y, Y); const k = y * 100 + m; const M = ms.get(k) || { b: 0, c: 0 }; M.b += r._b; M.c++; ms.set(k, M); });

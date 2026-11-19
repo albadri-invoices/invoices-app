@@ -1,6 +1,6 @@
 // خدمة العمل بدون إنترنت: تحفظ واجهة التطبيق في الجهاز. البيانات لا تُحفظ هنا (تُحفظ في IndexedDB)، وطلبات الخادم لا تمر من الكاش.
-const CACHE = 'daftar-v3.0.0';
-const SHELL = ['./', 'index.html', 'app.css?v=3.0.0', 'app.js?v=3.0.0', 'config.js?v=3.0.0', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
+const CACHE = 'daftar-v3.1.0';
+const SHELL = ['./', 'index.html', 'app.css?v=3.1.0', 'app.js?v=3.1.0', 'config.js?v=3.1.0', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'];
 
 self.addEventListener('install', e => {

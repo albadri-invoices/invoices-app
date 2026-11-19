@@ -15,6 +15,7 @@ const CFG = {
   LOG_SHEET: 'سجل التغييرات',
   IMAGES_FOLDER: 'دفتر الفواتير - الصور',
   EXPORT_FOLDER: 'دفتر الفواتير - ملفات Excel',
+  BACKUP_FOLDER: 'دفتر الفواتير - نسخ احتياطية',
   APP_URL: 'https://albadri-invoices.github.io/invoices-app/',
 };
 
@@ -62,6 +63,8 @@ function doPost(e) {
       case 'image': out = { ok: true, data: getImage(p.id) }; break;
       case 'users': if (!admin) throw new Error('ADMIN_ONLY'); out = { ok: true, users: listUsers_() }; break;
       case 'saveUser': if (!admin) throw new Error('ADMIN_ONLY'); out = saveUser_(p.u || {}); break;
+      case 'status': out = { ok: true, backup: backupInfo_() }; break;
+      case 'backup': if (!admin) throw new Error('ADMIN_ONLY'); out = { ok: true, backup: backupNow_('يدوي') }; break;
       default: throw new Error('UNKNOWN_ACTION');
     }
   } catch (err) {
@@ -157,8 +160,38 @@ function setup() {
     pinMsg = ' المستخدمين موجودين في ورقة «المستخدمين».';
   }
   CacheService.getScriptCache().remove('USERS');
+  // نسخة احتياطية تلقائية كل يوم (الساعة 2 فجرًا تقريبًا)
+  const hasTrigger = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'dailyBackup'; });
+  if (!hasTrigger) ScriptApp.newTrigger('dailyBackup').timeBased().everyDays(1).atHour(2).create();
+  const b = backupNow_('عند التجهيز');
   const text = callClaude_(CFG.FAST_MODEL, [{ type: 'text', text: 'Reply with only the word OK.' }], null, 'low');
-  Logger.log('تم التجهيز بنجاح. عدد السجلات الموجودة: ' + Math.max(0, n) + '. رد Claude: ' + text + '.' + pinMsg);
+  Logger.log('تم التجهيز بنجاح. عدد السجلات الموجودة: ' + Math.max(0, n) + '. رد Claude: ' + text + '.' + pinMsg +
+    ' النسخ الاحتياطية اليومية: مفعّلة. أول نسخة: ' + b.name);
+}
+
+/* ================= النسخ الاحتياطية ================= */
+
+function dailyBackup() { backupNow_('تلقائي'); }
+
+// نسخة كاملة من جدول البيانات (كل الأوراق) في مجلد «دفتر الفواتير - نسخ احتياطية»، ويُحتفظ بآخر 60 نسخة
+function backupNow_(kind) {
+  const ss = SpreadsheetApp.getActive();
+  const tz = Session.getScriptTimeZone();
+  const name = 'نسخة احتياطية ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm') + ' (' + kind + ')';
+  const folder = DriveApp.getFolderById(folderId_(CFG.BACKUP_FOLDER));
+  const copy = DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+  const files = [];
+  const it = folder.getFiles();
+  while (it.hasNext()) files.push(it.next());
+  files.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  files.slice(60).forEach(function (f) { try { f.setTrashed(true); } catch (e) {} });
+  const info = { at: Date.now(), name: name, url: copy.getUrl(), count: Math.min(files.length, 60), rows: Math.max(0, sheet_().getLastRow() - 1) };
+  PropertiesService.getScriptProperties().setProperty('LAST_BACKUP', JSON.stringify(info));
+  return info;
+}
+function backupInfo_() {
+  const s = PropertiesService.getScriptProperties().getProperty('LAST_BACKUP');
+  return s ? JSON.parse(s) : null;
 }
 
 function usersSheet_() {
@@ -200,7 +233,7 @@ const WIRE = ['id', 'type', 'no', 'date', 'desc', 'amt', 'rv', 'why', 'ok', 'img
 function wire_(d) {
   return WIRE.map(function (k) {
     const v = d[k];
-    if (k === 'img') return v ? 1 : 0;
+    if (k === 'img') return v ? String(v) : '';
     if (k === 'rv' || k === 'ok') return v ? 1 : 0;
     return v == null ? '' : v;
   });
